@@ -52,8 +52,15 @@ shared_ui_manifest="$response_directory/shared-ui.yaml"
 kustomize build tests/model_registry_shared_ui > "$shared_ui_manifest"
 expected_ui_image=$(kubectl create --dry-run=client --validate=false -f "$shared_ui_manifest" -o json | python -c '
 import json, sys
-resources = json.load(sys.stdin)
-deployments = [item for item in resources["items"] if item["kind"] == "Deployment" and item["metadata"]["name"] == "model-registry-ui" and item["metadata"]["namespace"] == "kubeflow"]
+# kubectl create prints a separate JSON object for each flattened resource.
+decoder = json.JSONDecoder()
+remaining = sys.stdin.read().lstrip()
+resources = []
+while remaining:
+    resource, end = decoder.raw_decode(remaining)
+    resources.append(resource)
+    remaining = remaining[end:].lstrip()
+deployments = [item for item in resources if item["kind"] == "Deployment" and item["metadata"]["name"] == "model-registry-ui" and item["metadata"]["namespace"] == "kubeflow"]
 assert len(deployments) == 1, "Expected one shared UI Deployment"
 containers = [item for item in deployments[0]["spec"]["template"]["spec"]["containers"] if item["name"] == "model-registry-ui"]
 assert len(containers) == 1, "Expected one shared UI container"

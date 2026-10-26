@@ -41,7 +41,12 @@ DEPLOYMENT = {
 
 class SharedRegistryImageTest(unittest.TestCase):
     def run_guard(
-        self, expected_image=IMAGE, actual_image=None, change=None, fixture_change=None
+        self,
+        expected_image=IMAGE,
+        actual_image=None,
+        change=None,
+        fixture_change=None,
+        created_output=None,
     ):
         with tempfile.TemporaryDirectory(prefix="registry-image-test-") as directory:
             directory = Path(directory)
@@ -55,8 +60,8 @@ class SharedRegistryImageTest(unittest.TestCase):
             )
             if change:
                 change(deployed["spec"]["template"]["spec"])
-            # A List with an unrelated first object prevents accidental reliance
-            # on the renderer's resource ordering.
+            # The input List includes an unrelated first object; kubectl create
+            # flattens it and prints each resource as a separate JSON object.
             fixture = {
                 "apiVersion": "v1",
                 "kind": "List",
@@ -73,6 +78,8 @@ class SharedRegistryImageTest(unittest.TestCase):
                 fixture_change(fixture)
             (directory / "fixture.json").write_text(json.dumps(fixture))
             (directory / "deployed.json").write_text(json.dumps(deployed))
+            if created_output is not None:
+                (directory / "created-output.json").write_text(created_output)
             programs = {
                 "kustomize": """import os
 from pathlib import Path
@@ -86,7 +93,13 @@ if arguments == ['config', 'current-context']:
     print('kind-registry-image-test')
 elif arguments[0] == 'create':
     assert '--dry-run=client' in arguments
-    print(Path(arguments[arguments.index('-f') + 1]).read_text())
+    output = directory / 'created-output.json'
+    if output.exists():
+        print(output.read_text())
+    else:
+        fixture = json.loads(Path(arguments[arguments.index('-f') + 1]).read_text())
+        for resource in fixture['items']:
+            print(json.dumps(resource, indent=2))
 elif arguments[0] == 'apply':
     if arguments[arguments.index('-f') + 1] == '-':
         try:
@@ -127,6 +140,45 @@ elif 'rollout' not in arguments and 'delete' not in arguments:
         result, reached = self.run_guard(image)
         self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
         self.assertTrue(reached)
+
+    def test_single_resource_output_is_accepted(self):
+        result, reached = self.run_guard(
+            created_output=json.dumps(DEPLOYMENT) + " \n\t"
+        )
+        self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
+        self.assertTrue(reached)
+
+    def test_resource_order_and_unrelated_trailing_objects_are_accepted(self):
+        for deployment_first in (False, True):
+            with self.subTest(deployment_first=deployment_first):
+
+                def reorder(fixture):
+                    if deployment_first:
+                        fixture["items"].reverse()
+                    fixture["items"].append(
+                        {
+                            "apiVersion": "v1",
+                            "kind": "Namespace",
+                            "metadata": {"name": "unrelated"},
+                        }
+                    )
+
+                result, reached = self.run_guard(fixture_change=reorder)
+                self.assertEqual(result.returncode, 77, result.stdout + result.stderr)
+                self.assertTrue(reached)
+
+    def test_empty_and_malformed_streams_are_rejected(self):
+        for output in (
+            "",
+            " \n\t",
+            "not-json",
+            json.dumps(DEPLOYMENT) + "\nnot-json",
+            json.dumps(DEPLOYMENT) + "\n{",
+        ):
+            with self.subTest(output=output):
+                result, reached = self.run_guard(created_output=output)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertFalse(reached)
 
     def test_source_version_updates_are_accepted(self):
         for tag in ("v0.3.17", "v0.3.18"):
