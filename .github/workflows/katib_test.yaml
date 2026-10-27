@@ -27,7 +27,7 @@ env:
 
 jobs:
   katib_test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 25
     steps:
     - name: Checkout
@@ -72,6 +72,14 @@ jobs:
     - name: Run Katib Test
       run: ./tests/katib_test.sh "${KF_PROFILE}"
 
+    - name: Capture Watcher Errors and Limits
+      if: always()
+      timeout-minutes: 3
+      run: |
+        mkdir -p logs
+        sudo python3 tests/katib_watcher_diagnostics.py --probe > logs/runner-watcher.json 2>&1 || true
+        python3 tests/katib_watcher_diagnostics.py --namespace "${KF_PROFILE}" > logs/node-watchers.txt 2>&1 || true
+
     - name: Test Authorized Katib Access
       run: kubectl get experiments.kubeflow.org -n $KF_PROFILE --token="$(kubectl -n $KF_PROFILE create token default-editor)"
 
@@ -103,14 +111,6 @@ jobs:
                 kubectl logs -n "$namespace" "$pod" --all-containers=true --prefix=true --tail=100 > "logs/$namespace-$pod.txt" 2>&1 || true
             done
         done
-
-    - name: Capture Watcher Errors and Limits
-      if: failure()
-      timeout-minutes: 3
-      run: |
-        mkdir -p logs
-        sudo python3 tests/katib_watcher_diagnostics.py --probe > logs/runner-watcher.json 2>&1 || true
-        python3 tests/katib_watcher_diagnostics.py --namespace "${KF_PROFILE}" > logs/node-watchers.txt 2>&1 || true
 
     - name: Upload Diagnostic Logs
       if: always()
