@@ -1,9 +1,13 @@
 name: Deploy and Test Katib
 on:
+  push:
+    branches:
+    - fix/katib-watcher-diagnosis
   pull_request:
     paths:
     - tests/install_KinD_create_KinD_cluster_install_kustomize.sh
     - tests/katib_install.sh
+    - tests/katib_watcher_diagnostics.py
     - .github/workflows/katib_test.yaml
     - applications/katib/upstream/**
     - common/istio*/**
@@ -28,6 +32,9 @@ jobs:
     steps:
     - name: Checkout
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+    - name: Test Watcher Diagnostics
+      run: python3 -m unittest discover -s tests -p katib_watcher_diagnostics_test.py
 
     - name: Install KinD, Create KinD cluster and Install kustomize
       run: ./tests/install_KinD_create_KinD_cluster_install_kustomize.sh
@@ -96,6 +103,14 @@ jobs:
                 kubectl logs -n "$namespace" "$pod" --all-containers=true --prefix=true --tail=100 > "logs/$namespace-$pod.txt" 2>&1 || true
             done
         done
+
+    - name: Capture Watcher Errors and Limits
+      if: failure()
+      timeout-minutes: 3
+      run: |
+        mkdir -p logs
+        sudo python3 tests/katib_watcher_diagnostics.py --probe > logs/runner-watcher.json 2>&1 || true
+        python3 tests/katib_watcher_diagnostics.py --namespace "${KF_PROFILE}" > logs/node-watchers.txt 2>&1 || true
 
     - name: Upload Diagnostic Logs
       if: always()
