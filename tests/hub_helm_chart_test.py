@@ -163,9 +163,13 @@ class HubChartTest(unittest.TestCase):
                 ],
             )
 
-    def test_shared_ui_fixture_preserves_default_authentication_and_ingress(self):
+    def test_shared_ui_preserves_default_authentication_and_ingress(self):
         rendered = subprocess.check_output(
-            ["kustomize", "build", str(ROOT / "tests/model_registry_shared_ui")],
+            [
+                "kustomize",
+                "build",
+                str(ROOT / "applications/hub/upstream/options/ui/overlays/istio"),
+            ],
             text=True,
         )
         items = [item for item in yaml.safe_load_all(rendered) if item]

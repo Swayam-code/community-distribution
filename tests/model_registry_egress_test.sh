@@ -49,7 +49,7 @@ save_resource kubeflow sidecar model-registry-ui-exception "$response_directory/
 # Replace the profile-local UI route with the real shared application. The
 # existing gateway, identity propagation and per-user access reviews remain.
 shared_ui_manifest="$response_directory/shared-ui.yaml"
-kustomize build tests/model_registry_shared_ui > "$shared_ui_manifest"
+kustomize build applications/hub/upstream/options/ui/overlays/istio > "$shared_ui_manifest"
 expected_ui_image=$(kubectl create --dry-run=client --validate=false -f "$shared_ui_manifest" \
     -o 'jsonpath={.spec.template.spec.containers[?(@.name=="model-registry-ui")].image}')
 kubectl apply -f "$shared_ui_manifest"
