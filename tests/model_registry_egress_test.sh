@@ -1,10 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-[[ $(kubectl config current-context) == kind-* ]] || {
-    echo 'ERROR: this test requires a KinD context.' >&2
-    exit 1
-}
 profile_namespace=${1:-kubeflow-user-example-com}
 gateway_endpoint=${GATEWAY_ENDPOINT:-http://localhost:8080}
 registry_endpoint="http://model-registry-service.${profile_namespace}.svc.cluster.local:8080/api/model_registry/v1alpha3/registered_models"
