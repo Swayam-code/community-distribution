@@ -1,10 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-# This fixture deliberately changes routing and mesh policies in an ephemeral
-# KinD test cluster. Never run it against a shared installation.
 [[ $(kubectl config current-context) == kind-* ]] || {
-    echo 'ERROR: the shared UI regression requires an isolated KinD test cluster.' >&2
+    echo 'ERROR: this test requires a KinD context.' >&2
     exit 1
 }
 profile_namespace=${1:-kubeflow-user-example-com}
@@ -13,23 +11,6 @@ registry_endpoint="http://model-registry-service.${profile_namespace}.svc.cluste
 ui_route="${gateway_endpoint}/model-registry/api/v1/model_registry/model-registry-service/registered_models?namespace=${profile_namespace}"
 response_directory=$(mktemp -d)
 control_probe="registry-egress-control-${RANDOM}"
-policy_modified=false
-sidecar_modified=false
-
-cleanup() {
-    local result=$?
-    trap - EXIT
-    if [[ $policy_modified == true ]]; then
-        kubectl apply -f "$response_directory/registry-policy.json" || result=1
-    fi
-    if [[ $sidecar_modified == true ]]; then
-        kubectl apply -f "$response_directory/sidecar.json" || result=1
-    fi
-    kubectl -n kubeflow delete pod "$control_probe" --ignore-not-found --wait=false || result=1
-    rm -rf "$response_directory"
-    exit "$result"
-}
-trap cleanup EXIT
 
 # Remove server-managed fields so backups can also recreate deleted objects.
 save_resource() {
@@ -46,8 +27,6 @@ json.dump(resource, sys.stdout)
 save_resource "$profile_namespace" authorizationpolicy model-registry-service "$response_directory/registry-policy.json"
 save_resource kubeflow sidecar model-registry-ui-exception "$response_directory/sidecar.json"
 
-# Replace the profile-local UI route with the real shared application. The
-# existing gateway, identity propagation and per-user access reviews remain.
 shared_ui_manifest="$response_directory/shared-ui.yaml"
 kustomize build applications/hub/upstream/options/ui/overlays/istio > "$shared_ui_manifest"
 expected_ui_image=$(kubectl create --dry-run=client --validate=false -f "$shared_ui_manifest" \
@@ -159,22 +138,16 @@ printf 'PASS: unauthenticated gateway request denied with HTTP %s\n' "$status"
 assert_probe_denied kubeflow "$control_probe" "$registry_endpoint"
 assert_probe_denied kubeflow "$control_probe" "http://model-registry-ui-service.kubeflow.svc.cluster.local/api/v1/model_registry?namespace=${profile_namespace}"
 
-# The exact additional trust rule must be necessary for the real UI request.
 python -c 'import json, sys; rules = json.load(open(sys.argv[1]))["spec"]["rules"]; assert len(rules) == 3; assert rules[2] == {"from": [{"source": {"principals": ["cluster.local/ns/kubeflow/sa/model-registry-ui"]}}]}' "$response_directory/registry-policy.json"
-policy_modified=true
 kubectl -n "$profile_namespace" patch authorizationpolicy model-registry-service --type=json \
     -p='[{"op":"remove","path":"/spec/rules/2"}]'
 assert_ui_response 500 "$profile_token"
 kubectl apply -f "$response_directory/registry-policy.json"
 assert_ui_response 200 "$profile_token"
-policy_modified=false
 
-# Prove the workload-specific egress exception is independently necessary.
-sidecar_modified=true
 kubectl -n kubeflow delete sidecar model-registry-ui-exception
 assert_ui_response 500 "$profile_token"
 kubectl apply -f "$response_directory/sidecar.json"
 assert_ui_response 200 "$profile_token"
-sidecar_modified=false
 assert_ui_response 403 "$unauthorized_token"
 printf 'Shared Registry UI cross-namespace authentication and authorization checks passed.\n'
