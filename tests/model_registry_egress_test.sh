@@ -50,24 +50,8 @@ save_resource kubeflow sidecar model-registry-ui-exception "$response_directory/
 # existing gateway, identity propagation and per-user access reviews remain.
 shared_ui_manifest="$response_directory/shared-ui.yaml"
 kustomize build tests/model_registry_shared_ui > "$shared_ui_manifest"
-expected_ui_image=$(kubectl create --dry-run=client --validate=false -f "$shared_ui_manifest" -o json | python -c '
-import json, sys
-# kubectl create prints a separate JSON object for each flattened resource.
-decoder = json.JSONDecoder()
-remaining = sys.stdin.read().lstrip()
-resources = []
-while remaining:
-    resource, end = decoder.raw_decode(remaining)
-    resources.append(resource)
-    remaining = remaining[end:].lstrip()
-deployments = [item for item in resources if item["kind"] == "Deployment" and item["metadata"]["name"] == "model-registry-ui" and item["metadata"]["namespace"] == "kubeflow"]
-assert len(deployments) == 1, "Expected one shared UI Deployment"
-containers = [item for item in deployments[0]["spec"]["template"]["spec"]["containers"] if item["name"] == "model-registry-ui"]
-assert len(containers) == 1, "Expected one shared UI container"
-image = containers[0]["image"]
-assert image.startswith(("ghcr.io/kubeflow/hub/ui:", "ghcr.io/kubeflow/hub/ui@"))
-print(image)
-')
+expected_ui_image=$(kubectl create --dry-run=client --validate=false -f "$shared_ui_manifest" \
+    -o 'jsonpath={.spec.template.spec.containers[?(@.name=="model-registry-ui")].image}')
 kubectl apply -f "$shared_ui_manifest"
 kubectl -n "$profile_namespace" delete virtualservice model-registry-ui --ignore-not-found
 kubectl -n kubeflow rollout status deployment/model-registry-ui --timeout=180s
@@ -76,6 +60,7 @@ import json, sys
 pod = json.load(sys.stdin)["spec"]["template"]["spec"]
 assert pod["serviceAccountName"] == "model-registry-ui"
 container = next(item for item in pod["containers"] if item["name"] == "model-registry-ui")
+assert container["image"].startswith(("ghcr.io/kubeflow/hub/ui:", "ghcr.io/kubeflow/hub/ui@"))
 assert container["image"] == sys.argv[1], (container["image"], sys.argv[1])
 assert container["args"] == ["--deployment-mode=kubeflow", "--port=8080"]
 assert not any(item["name"].startswith("MOCK") for item in container.get("env", []))
